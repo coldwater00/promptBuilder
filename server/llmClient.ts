@@ -1,8 +1,10 @@
+import dotenv from 'dotenv';
 import {
   GeneratedAnatomyBlock,
   PromptTypeDefinition,
 } from '../shared/promptTypes.js';
 import { buildMetaPrompt } from './metaPromptBuilder.js';
+import { appendLlmLog } from './llmLogger.js';
 
 export type LlmProvider = 'openrouter' | 'ollama';
 
@@ -29,11 +31,16 @@ export interface GeneratePromptResult extends ParsedLlmResult {
 const PLACEHOLDER_KEY = 'sk-or-v1-xxxxxxxxxxxxxxxxxxxxxxxx';
 
 export function getLlmConfig(env: NodeJS.ProcessEnv = process.env): LlmConfig {
+  if (env === process.env && !env.VITEST) {
+    dotenv.config({ override: true });
+  }
   const rawProvider = (env.LLM_PROVIDER || 'openrouter').trim().toLowerCase();
   const provider: LlmProvider = rawProvider === 'ollama' ? 'ollama' : 'openrouter';
 
   const openRouterApiKey = (env.OPENROUTER_API_KEY || '').trim();
-  const openRouterModel = (env.OPENROUTER_MODEL || 'google/gemini-2.5-flash').trim();
+  const openRouterModel = (
+    env.OPENROUTER_MODEL || 'nvidia/nemotron-3-ultra-550b-a55b:free'
+  ).trim();
   const openRouterBaseUrl = (
     env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1/chat/completions'
   ).trim();
@@ -67,44 +74,171 @@ export function getLlmConfig(env: NodeJS.ProcessEnv = process.env): LlmConfig {
 }
 
 /**
+ * Scans a string and returns all balanced top-level `{ ... }` JSON object substrings,
+ * properly ignoring braces that appear inside quoted JSON strings.
+ */
+function findBalancedJsonObjects(text: string): string[] {
+  const results: string[] = [];
+  let depth = 0;
+  let startIndex = -1;
+  let inString = false;
+  let isEscaped = false;
+
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+
+    if (inString) {
+      if (isEscaped) {
+        isEscaped = false;
+      } else if (ch === '\\') {
+        isEscaped = true;
+      } else if (ch === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (ch === '"') {
+      if (depth > 0) {
+        inString = true;
+      }
+      continue;
+    }
+
+    if (ch === '{') {
+      if (depth === 0) {
+        startIndex = i;
+      }
+      depth++;
+    } else if (ch === '}') {
+      if (depth > 0) {
+        depth--;
+        if (depth === 0 && startIndex !== -1) {
+          results.push(text.slice(startIndex, i + 1));
+          startIndex = -1;
+        }
+      }
+    }
+  }
+
+  return results;
+}
+
+/**
+ * Escapes raw unescaped control characters (like literal newlines or tabs)
+ * that some LLMs emit directly inside JSON string literals.
+ */
+function escapeControlCharsInJsonStrings(jsonCandidate: string): string {
+  let out = '';
+  let inString = false;
+  let isEscaped = false;
+
+  for (let i = 0; i < jsonCandidate.length; i++) {
+    const ch = jsonCandidate[i];
+
+    if (inString) {
+      if (isEscaped) {
+        isEscaped = false;
+        out += ch;
+      } else if (ch === '\\') {
+        isEscaped = true;
+        out += ch;
+      } else if (ch === '"') {
+        inString = false;
+        out += ch;
+      } else if (ch === '\n') {
+        out += '\\n';
+      } else if (ch === '\r') {
+        out += '\\r';
+      } else if (ch === '\t') {
+        out += '\\t';
+      } else {
+        out += ch;
+      }
+      continue;
+    }
+
+    if (ch === '"') {
+      inString = true;
+    }
+    out += ch;
+  }
+
+  return out;
+}
+
+function tryParseJsonCandidate(candidate: string): unknown | undefined {
+  try {
+    return JSON.parse(candidate);
+  } catch {
+    try {
+      return JSON.parse(escapeControlCharsInJsonStrings(candidate));
+    } catch {
+      return undefined;
+    }
+  }
+}
+
+/**
  * Extracts and parses a JSON object from raw LLM output, handling:
- * - Raw JSON strings
- * - Markdown code fences (```json ... ``` or ``` ... ```)
- * - Optional <think>...</think> blocks or surrounding prose
+ * - Raw JSON strings (including JSON whose string values contain inner ``` code fences)
+ * - Outer Markdown code fences (```json ... ``` or ``` ... ```)
+ * - Optional <think>...</think> or leading ... </think> blocks
+ * - Multiple {...} blocks in prose before/after the target payload
  */
 export function extractJsonFromText(rawContent: string): unknown {
   if (!rawContent || typeof rawContent !== 'string') {
     throw new Error('Risposta LLM vuota o non valida.');
   }
 
-  // Remove <think>...</think> blocks if present from reasoning models
-  let cleaned = rawContent.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+  // 1. Remove <think>...</think> blocks or orphaned leading ... </think> preambles
+  let cleaned = rawContent
+    .replace(/<think>[\s\S]*?<\/think>/gi, '')
+    .replace(/^[\s\S]*?<\/think>/i, '')
+    .trim();
 
-  // Strip Markdown code fences if present
-  const fenceMatch = cleaned.match(/```(?:json)?\s*([\s\S]*?)```/i);
-  if (fenceMatch && fenceMatch[1]) {
-    cleaned = fenceMatch[1].trim();
+  // 2. Direct parse attempt first (critical when response is already valid JSON
+  //    but contains inner ``` code blocks inside finalPrompt/anatomy strings)
+  const directParsed = tryParseJsonCandidate(cleaned);
+  if (directParsed && typeof directParsed === 'object' && !Array.isArray(directParsed)) {
+    return directParsed;
   }
 
-  // First attempt: direct JSON.parse
-  try {
-    return JSON.parse(cleaned);
-  } catch {
-    // Second attempt: locate the outermost {...} object
-    const firstBrace = cleaned.indexOf('{');
-    const lastBrace = cleaned.lastIndexOf('}');
-    if (firstBrace !== -1 && lastBrace > firstBrace) {
-      const candidate = cleaned.slice(firstBrace, lastBrace + 1);
-      try {
-        return JSON.parse(candidate);
-      } catch (innerErr) {
-        throw new Error(
-          `Impossibile effettuare il parsing del JSON restituito dal modello: ${(innerErr as Error).message}`
-        );
+  // 3. If wrapped in outer Markdown code fences, strip outer fences greedily
+  if (cleaned.startsWith('```')) {
+    const outerFenceMatch = cleaned.match(/^```(?:json)?\s*([\s\S]*)\s*```$/i);
+    if (outerFenceMatch && outerFenceMatch[1]) {
+      const inner = outerFenceMatch[1].trim();
+      const fenceParsed = tryParseJsonCandidate(inner);
+      if (fenceParsed && typeof fenceParsed === 'object' && !Array.isArray(fenceParsed)) {
+        return fenceParsed;
+      }
+      cleaned = inner;
+    }
+  }
+
+  // 4. Scan for balanced {...} JSON objects and prefer the one matching our contract
+  const candidates = findBalancedJsonObjects(cleaned);
+  let fallbackObject: Record<string, unknown> | undefined;
+
+  for (const candidate of candidates) {
+    const parsed = tryParseJsonCandidate(candidate);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      const obj = parsed as Record<string, unknown>;
+      if ('finalPrompt' in obj || 'anatomy' in obj || 'whyItWorks' in obj) {
+        return obj;
+      }
+      if (!fallbackObject) {
+        fallbackObject = obj;
       }
     }
-    throw new Error('La risposta del modello non contiene un oggetto JSON valido.');
   }
+
+  if (fallbackObject) {
+    return fallbackObject;
+  }
+
+  throw new Error('La risposta del modello non contiene un oggetto JSON valido.');
 }
 
 /**
@@ -207,6 +341,7 @@ export async function generateStructuredPrompt(
 ): Promise<GeneratePromptResult> {
   const config = getLlmConfig(env);
   const { systemPrompt, userPrompt } = buildMetaPrompt(framework, userText);
+  const startTime = Date.now();
 
   if (config.provider === 'openrouter') {
     if (!config.configured || !config.openRouterApiKey) {
@@ -214,6 +349,28 @@ export async function generateStructuredPrompt(
         'OPENROUTER_API_KEY non configurata. Imposta una chiave valida nel file .env oppure imposta LLM_PROVIDER=ollama.'
       );
     }
+
+    const requestPayload = {
+      model: config.model,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt },
+      ],
+      temperature: 0.4,
+      response_format: { type: 'json_object' },
+    };
+
+    appendLlmLog(
+      {
+        event: 'LLM_REQUEST',
+        provider: 'openrouter',
+        model: config.model,
+        frameworkId: framework.id,
+        endpoint: config.openRouterBaseUrl,
+        payload: requestPayload,
+      },
+      env
+    );
 
     const response = await fetchImpl(config.openRouterBaseUrl, {
       method: 'POST',
@@ -223,19 +380,26 @@ export async function generateStructuredPrompt(
         'HTTP-Referer': 'http://localhost:5173',
         'X-Title': 'PromptBuilder Stateless App',
       },
-      body: JSON.stringify({
-        model: config.model,
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userPrompt },
-        ],
-        temperature: 0.4,
-        response_format: { type: 'json_object' },
-      }),
+      body: JSON.stringify(requestPayload),
     });
+
+    const durationMs = Date.now() - startTime;
 
     if (!response.ok) {
       const errorBody = await response.text().catch(() => '');
+      appendLlmLog(
+        {
+          event: 'LLM_ERROR',
+          provider: 'openrouter',
+          model: config.model,
+          frameworkId: framework.id,
+          endpoint: config.openRouterBaseUrl,
+          statusCode: response.status,
+          durationMs,
+          error: errorBody || response.statusText,
+        },
+        env
+      );
       throw new Error(
         `Errore OpenRouter (${response.status}): ${errorBody || response.statusText}`
       );
@@ -244,42 +408,113 @@ export async function generateStructuredPrompt(
     const data = (await response.json()) as {
       choices?: Array<{ message?: { content?: string } }>;
     };
+
+    appendLlmLog(
+      {
+        event: 'LLM_RESPONSE_RAW',
+        provider: 'openrouter',
+        model: config.model,
+        frameworkId: framework.id,
+        endpoint: config.openRouterBaseUrl,
+        statusCode: response.status ?? 200,
+        durationMs,
+        payload: data,
+      },
+      env
+    );
+
     const rawContent = data.choices?.[0]?.message?.content;
     if (!rawContent) {
       throw new Error('OpenRouter ha restituito una risposta priva di contenuto.');
     }
 
-    const parsed = parseLlmJsonOutput(rawContent, framework);
-    return {
-      ...parsed,
-      providerUsed: 'openrouter',
-      modelUsed: config.model,
-    };
+    try {
+      const parsed = parseLlmJsonOutput(rawContent, framework);
+      appendLlmLog(
+        {
+          event: 'LLM_PARSED_SUCCESS',
+          provider: 'openrouter',
+          model: config.model,
+          frameworkId: framework.id,
+          durationMs,
+          payload: parsed,
+        },
+        env
+      );
+      return {
+        ...parsed,
+        providerUsed: 'openrouter',
+        modelUsed: config.model,
+      };
+    } catch (parseErr) {
+      appendLlmLog(
+        {
+          event: 'LLM_ERROR',
+          provider: 'openrouter',
+          model: config.model,
+          frameworkId: framework.id,
+          durationMs,
+          error: (parseErr as Error).message,
+          payload: { rawContent },
+        },
+        env
+      );
+      throw parseErr;
+    }
   }
 
   // Provider: Ollama (compatibile sia con runner GGUF sia con runner MLX come qwen3.6:35b-a3b-coding-nvfp4)
   const ollamaEndpoint = `${config.ollamaBaseUrl}/api/chat`;
+  const ollamaPayload = {
+    model: config.model,
+    messages: [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: userPrompt },
+    ],
+    think: false,
+    stream: false,
+    options: {
+      temperature: 0.4,
+    },
+  };
+
+  appendLlmLog(
+    {
+      event: 'LLM_REQUEST',
+      provider: 'ollama',
+      model: config.model,
+      frameworkId: framework.id,
+      endpoint: ollamaEndpoint,
+      payload: ollamaPayload,
+    },
+    env
+  );
+
   const response = await fetchImpl(ollamaEndpoint, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({
-      model: config.model,
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userPrompt },
-      ],
-      think: false,
-      stream: false,
-      options: {
-        temperature: 0.4,
-      },
-    }),
+    body: JSON.stringify(ollamaPayload),
   });
+
+  const durationMs = Date.now() - startTime;
 
   if (!response.ok) {
     const errorBody = await response.text().catch(() => '');
+    appendLlmLog(
+      {
+        event: 'LLM_ERROR',
+        provider: 'ollama',
+        model: config.model,
+        frameworkId: framework.id,
+        endpoint: ollamaEndpoint,
+        statusCode: response.status,
+        durationMs,
+        error: errorBody || response.statusText,
+      },
+      env
+    );
     throw new Error(
       `Errore Ollama (${response.status}): ${errorBody || response.statusText}`
     );
@@ -288,15 +523,57 @@ export async function generateStructuredPrompt(
   const data = (await response.json()) as {
     message?: { content?: string };
   };
+
+  appendLlmLog(
+    {
+      event: 'LLM_RESPONSE_RAW',
+      provider: 'ollama',
+      model: config.model,
+      frameworkId: framework.id,
+      endpoint: ollamaEndpoint,
+      statusCode: response.status ?? 200,
+      durationMs,
+      payload: data,
+    },
+    env
+  );
+
   const rawContent = data.message?.content;
   if (!rawContent) {
     throw new Error('Ollama ha restituito una risposta priva di contenuto.');
   }
 
-  const parsed = parseLlmJsonOutput(rawContent, framework);
-  return {
-    ...parsed,
-    providerUsed: 'ollama',
-    modelUsed: config.model,
-  };
+  try {
+    const parsed = parseLlmJsonOutput(rawContent, framework);
+    appendLlmLog(
+      {
+        event: 'LLM_PARSED_SUCCESS',
+        provider: 'ollama',
+        model: config.model,
+        frameworkId: framework.id,
+        durationMs,
+        payload: parsed,
+      },
+      env
+    );
+    return {
+      ...parsed,
+      providerUsed: 'ollama',
+      modelUsed: config.model,
+    };
+  } catch (parseErr) {
+    appendLlmLog(
+      {
+        event: 'LLM_ERROR',
+        provider: 'ollama',
+        model: config.model,
+        frameworkId: framework.id,
+        durationMs,
+        error: (parseErr as Error).message,
+        payload: { rawContent },
+      },
+      env
+    );
+    throw parseErr;
+  }
 }

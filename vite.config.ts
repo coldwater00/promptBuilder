@@ -5,6 +5,7 @@ import path from 'node:path';
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, path.resolve(__dirname), '');
   const apiPort = env.PORT || process.env.PORT || '3002';
+  const fePort = Number(env.FRONTEND_PORT || process.env.FRONTEND_PORT || 5173);
 
   return {
     root: path.resolve(__dirname, 'client'),
@@ -15,7 +16,7 @@ export default defineConfig(({ mode }) => {
       },
     },
     server: {
-      port: 5173,
+      port: fePort,
       proxy: {
         '/api': {
           target: `http://localhost:${apiPort}`,

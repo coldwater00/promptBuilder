@@ -15,6 +15,11 @@ import {
   GeneratePromptResult,
   getLlmConfig,
 } from './llmClient.js';
+import {
+  appendLlmLog,
+  getLogFilePath,
+  isLlmLogEnabled,
+} from './llmLogger.js';
 
 dotenv.config();
 
@@ -56,6 +61,18 @@ export function createApp(
         typeof body?.frameworkId === 'string' ? body.frameworkId.trim() : '';
       const rawUserText =
         typeof body?.userText === 'string' ? body.userText.trim() : '';
+
+      const cfg = getLlmConfig(env);
+      appendLlmLog(
+        {
+          event: 'API_BUILD_PROMPT_REQUEST',
+          provider: cfg.provider,
+          model: cfg.model,
+          frameworkId,
+          payload: { frameworkId, userText: rawUserText },
+        },
+        env
+      );
 
       if (!frameworkId) {
         res.status(400).json({
@@ -132,8 +149,9 @@ if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(currentFil
   const app = createApp();
   app.listen(port, () => {
     const cfg = getLlmConfig();
+    const logStatus = isLlmLogEnabled() ? getLogFilePath() : 'disabled';
     console.log(
-      `[PromptBuilder Server] Listening on http://localhost:${port} | provider=${cfg.provider} | model=${cfg.model} | configured=${cfg.configured}`
+      `[PromptBuilder Server] Listening on http://localhost:${port} | provider=${cfg.provider} | model=${cfg.model} | configured=${cfg.configured} | log=${logStatus}`
     );
   });
 }

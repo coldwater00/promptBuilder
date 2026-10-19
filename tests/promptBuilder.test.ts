@@ -119,6 +119,31 @@ Ecco il tuo JSON strutturato:
     expect(parsed.whyItWorks).toHaveLength(2);
   });
 
+  it('non fallisce con "Unexpected non-whitespace character after JSON" quando finalPrompt contiene blocchi ``` interni o ci sono più blocchi {...}', () => {
+    const complexOutput = `Ragionamento iniziale con esempio {"debug": true} prima del tag di chiusura.</think>
+Nota introduttiva con parentesi {opzionale}:
+\`\`\`json
+{
+  "finalPrompt": "[ROLE] Senior TS Dev\\n[TASK] Scrivi codice:\\n\`\`\`typescript\\nfunction test() { return { ok: true }; }\\n\`\`\`\\n[FORMAT] Modulo ES",
+  "anatomy": [
+    { "blockKey": "R", "blockLabel": "Role", "content": "Senior TS Dev" },
+    { "blockKey": "T", "blockLabel": "Task", "content": "Codice con \`\`\`ts\\nconst x = { a: 1 };\\n\`\`\`" },
+    { "blockKey": "F", "blockLabel": "Format", "content": "Modulo ES" }
+  ],
+  "whyItWorks": [
+    "Include esempi di codice con parentesi graffe",
+    "Separa chiaramente ruolo e formato"
+  ]
+}
+\`\`\`
+Commento finale con {"extra": "info"}`;
+
+    const parsed = parseLlmJsonOutput(complexOutput, rtfFramework);
+    expect(parsed.finalPrompt).toContain('function test()');
+    expect(parsed.anatomy).toHaveLength(3);
+    expect(parsed.whyItWorks).toHaveLength(2);
+  });
+
   it('invoca correttamente OpenRouter e Ollama tramite fetch', async () => {
     const mockFetch = vi.fn().mockResolvedValue({
       ok: true,
