@@ -20,7 +20,7 @@ export interface LlmLogEntry {
 }
 
 export function isLlmLogEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
-  if (env.VITEST && !env.LLM_LOG_ENABLED) {
+  if ((env.VITEST || env.VERCEL) && !env.LLM_LOG_ENABLED) {
     return false;
   }
   const raw = (env.LLM_LOG_ENABLED ?? 'true').trim().toLowerCase();
