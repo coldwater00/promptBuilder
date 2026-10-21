@@ -161,32 +161,25 @@ export const PromptWorkspace: React.FC<PromptWorkspaceProps> = ({
 
           <button
             type="submit"
-            className="primary-submit-btn"
+            className={`primary-submit-btn ${isLoading ? 'is-loading-wait' : ''}`}
             disabled={!isReady}
           >
             {isLoading ? (
               <span className="loading-state" role="status" aria-live="polite">
                 <svg
-                  className="spinner-svg"
+                  className="hourglass-svg"
                   viewBox="0 0 24 24"
                   fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
                   aria-hidden="true"
                 >
-                  <circle
-                    className="spinner-track"
-                    cx="12"
-                    cy="12"
-                    r="9"
-                    stroke="currentColor"
-                    strokeWidth="3"
-                  />
-                  <path
-                    className="spinner-head"
-                    d="M21 12a9 9 0 0 0-9-9"
-                    stroke="currentColor"
-                    strokeWidth="3"
-                    strokeLinecap="round"
-                  />
+                  <path d="M5 22h14" />
+                  <path d="M5 2h14" />
+                  <path d="M17 22v-4.172a2 2 0 0 0-.586-1.414L12 12l-4.414 4.414A2 2 0 0 0 7 17.828V22" />
+                  <path d="M7 2v4.172a2 2 0 0 0 .586 1.414L12 12l4.414-4.414A2 2 0 0 0 17 6.172V2" />
                 </svg>
                 <span>Ingegnerizzazione {framework.name} in corso...</span>
               </span>
@@ -210,6 +203,35 @@ export const PromptWorkspace: React.FC<PromptWorkspaceProps> = ({
             )}
           </button>
         </div>
+
+        {isLoading && (
+          <div className="hourglass-status-panel" role="status" aria-live="polite">
+            <div className="hourglass-badge" aria-hidden="true">
+              <svg
+                className="hourglass-svg hourglass-svg-lg"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M5 22h14" />
+                <path d="M5 2h14" />
+                <path d="M17 22v-4.172a2 2 0 0 0-.586-1.414L12 12l-4.414 4.414A2 2 0 0 0 7 17.828V22" />
+                <path d="M7 2v4.172a2 2 0 0 0 .586 1.414L12 12l4.414-4.414A2 2 0 0 0 17 6.172V2" />
+              </svg>
+            </div>
+            <div className="hourglass-status-text">
+              <strong>Generazione del prompt strutturato in corso...</strong>
+              <span>
+                Il modello AI sta elaborando i blocchi metodologici di{' '}
+                <strong>{framework.name}</strong>. Attendi qualche secondo.
+              </span>
+            </div>
+          </div>
+        )}
       </form>
     </section>
   );

@@ -31,6 +31,20 @@ export interface PromptTypeDefinition {
 export interface BuildPromptRequest {
   frameworkId: string;
   userText: string;
+  passphrase?: string;
+}
+
+export interface AuthStatusResponse {
+  authRequired: boolean;
+}
+
+export interface AuthVerifyRequest {
+  passphrase: string;
+}
+
+export interface AuthVerifyResponse {
+  authenticated: boolean;
+  error?: string;
 }
 
 export interface GeneratedAnatomyBlock {

@@ -1,5 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
+  AuthStatusResponse,
+  AuthVerifyResponse,
   BuildPromptResponse,
   getPromptTypeById,
   HealthResponse,
@@ -8,6 +10,7 @@ import {
 import { FilterCategory, PromptCatalog } from './components/PromptCatalog';
 import { PromptWorkspace } from './components/PromptWorkspace';
 import { PromptResultView } from './components/PromptResultView';
+import { PassphraseGate } from './components/PassphraseGate';
 
 export const App: React.FC = () => {
   const [selectedId, setSelectedId] = useState<string>(PROMPT_TYPES[0].id);
@@ -19,8 +22,16 @@ export const App: React.FC = () => {
   const [result, setResult] = useState<BuildPromptResponse | null>(null);
   const [health, setHealth] = useState<HealthResponse | null>(null);
 
+  const [authChecking, setAuthChecking] = useState<boolean>(true);
+  const [authRequired, setAuthRequired] = useState<boolean>(true);
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
+  const [activePassphrase, setActivePassphrase] = useState<string>('');
+  const [isVerifyingAuth, setIsVerifyingAuth] = useState<boolean>(false);
+  const [authError, setAuthError] = useState<string | null>(null);
+
   useEffect(() => {
     let active = true;
+
     fetch('/api/health')
       .then((res) => (res.ok ? res.json() : null))
       .then((data: HealthResponse | null) => {
@@ -31,6 +42,31 @@ export const App: React.FC = () => {
       .catch(() => {
         // Ignore silent health check errors on startup
       });
+
+    fetch('/api/auth/status')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data: AuthStatusResponse | null) => {
+        if (!active) return;
+        if (data && data.authRequired === false) {
+          setAuthRequired(false);
+          setIsAuthenticated(true);
+        } else {
+          setAuthRequired(true);
+          setIsAuthenticated(false);
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setAuthRequired(true);
+          setIsAuthenticated(false);
+        }
+      })
+      .finally(() => {
+        if (active) {
+          setAuthChecking(false);
+        }
+      });
+
     return () => {
       active = false;
     };
@@ -65,6 +101,47 @@ export const App: React.FC = () => {
     [selectedId]
   );
 
+  const handleVerifyPassphrase = async (candidate: string) => {
+    setIsVerifyingAuth(true);
+    setAuthError(null);
+
+    try {
+      const response = await fetch('/api/auth/verify', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ passphrase: candidate }),
+      });
+
+      const payload = (await response.json()) as AuthVerifyResponse;
+      if (!response.ok || !payload.authenticated) {
+        throw new Error(
+          payload?.error || 'Passphrase non valida. Verifica e riprova.'
+        );
+      }
+
+      setActivePassphrase(candidate);
+      setIsAuthenticated(true);
+      setAuthError(null);
+    } catch (err) {
+      setAuthError(
+        err instanceof Error
+          ? err.message
+          : 'Errore durante la verifica della passphrase.'
+      );
+    } finally {
+      setIsVerifyingAuth(false);
+    }
+  };
+
+  const handleLockSession = () => {
+    setActivePassphrase('');
+    setIsAuthenticated(false);
+    setAuthError(null);
+    setErrorMessage(null);
+  };
+
   const handleSelectFramework = (id: string) => {
     setSelectedId(id);
     setErrorMessage(null);
@@ -81,11 +158,16 @@ export const App: React.FC = () => {
     setErrorMessage(null);
 
     try {
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+      };
+      if (activePassphrase) {
+        headers['x-app-passphrase'] = activePassphrase;
+      }
+
       const response = await fetch('/api/build-prompt', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers,
         body: JSON.stringify({
           frameworkId: activeFramework.id,
           userText: trimmed,
@@ -93,6 +175,15 @@ export const App: React.FC = () => {
       });
 
       const payload = await response.json();
+      if (response.status === 401) {
+        setIsAuthenticated(false);
+        setActivePassphrase('');
+        setAuthError(
+          payload?.error || 'Sessione scaduta o passphrase non valida.'
+        );
+        return;
+      }
+
       if (!response.ok) {
         throw new Error(
           payload?.error || `Errore del server (${response.status})`
@@ -149,39 +240,58 @@ export const App: React.FC = () => {
                 <span>Connessione backend...</span>
               </span>
             )}
+
+            {authRequired && isAuthenticated && (
+              <button
+                type="button"
+                className="secondary-btn lock-session-btn"
+                onClick={handleLockSession}
+                title="Torna alla schermata di inserimento passphrase"
+              >
+                Blocca accesso
+              </button>
+            )}
           </div>
         </div>
       </header>
 
       <main className="app-main">
-        <div className="dashboard-grid">
-          <PromptCatalog
-            frameworks={filteredFrameworks}
-            selectedId={activeFramework.id}
-            activeCategory={activeCategory}
-            searchQuery={searchQuery}
-            onSelectFramework={handleSelectFramework}
-            onChangeCategory={setActiveCategory}
-            onChangeSearch={setSearchQuery}
+        {authChecking ? null : !isAuthenticated ? (
+          <PassphraseGate
+            isVerifying={isVerifyingAuth}
+            errorMessage={authError}
+            onSubmitPassphrase={handleVerifyPassphrase}
           />
-
-          <div className="workspace-column">
-            <PromptWorkspace
-              framework={activeFramework}
-              userText={userText}
-              isLoading={isLoading}
-              errorMessage={errorMessage}
-              onChangeUserText={setUserText}
-              onSubmit={handleSubmitPrompt}
-              onUseExample={(sample) => {
-                setUserText(sample);
-                setErrorMessage(null);
-              }}
+        ) : (
+          <div className="dashboard-grid">
+            <PromptCatalog
+              frameworks={filteredFrameworks}
+              selectedId={activeFramework.id}
+              activeCategory={activeCategory}
+              searchQuery={searchQuery}
+              onSelectFramework={handleSelectFramework}
+              onChangeCategory={setActiveCategory}
+              onChangeSearch={setSearchQuery}
             />
 
-            {result && <PromptResultView result={result} />}
+            <div className="workspace-column">
+              <PromptWorkspace
+                framework={activeFramework}
+                userText={userText}
+                isLoading={isLoading}
+                errorMessage={errorMessage}
+                onChangeUserText={setUserText}
+                onSubmit={handleSubmitPrompt}
+                onUseExample={(sample) => {
+                  setUserText(sample);
+                  setErrorMessage(null);
+                }}
+              />
+
+              {result && <PromptResultView result={result} />}
+            </div>
           </div>
-        </div>
+        )}
       </main>
 
       <footer className="app-footer">

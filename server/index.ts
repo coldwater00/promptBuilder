@@ -1,14 +1,18 @@
 import dotenv from 'dotenv';
 import express, { Request, Response } from 'express';
+import crypto from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import fs from 'node:fs';
 import {
+  AuthStatusResponse,
+  AuthVerifyRequest,
+  AuthVerifyResponse,
   BuildPromptRequest,
   BuildPromptResponse,
   getPromptTypeById,
   HealthResponse,
-   PROMPT_TYPES,
+  PROMPT_TYPES,
 } from '../shared/promptTypes.js';
 import {
   generateStructuredPrompt,
@@ -25,6 +29,18 @@ dotenv.config();
 
 const MIN_USER_TEXT_LENGTH = 5;
 const MAX_USER_TEXT_LENGTH = 8000;
+
+export function getExpectedPassphrase(env: NodeJS.ProcessEnv = process.env): string {
+  return typeof env.APP_PASSPHRASE === 'string' ? env.APP_PASSPHRASE.trim() : '';
+}
+
+export function isPassphraseValid(candidate: string, expected: string): boolean {
+  if (!expected) return true;
+  if (!candidate) return false;
+  const candidateHash = crypto.createHash('sha256').update(candidate, 'utf8').digest();
+  const expectedHash = crypto.createHash('sha256').update(expected, 'utf8').digest();
+  return crypto.timingSafeEqual(candidateHash, expectedHash);
+}
 
 export type PromptGeneratorFn = (
   framework: NonNullable<ReturnType<typeof getPromptTypeById>>,
@@ -50,6 +66,34 @@ export function createApp(
     });
   });
 
+  app.get('/api/auth/status', (_req: Request, res: Response<AuthStatusResponse>) => {
+    const expected = getExpectedPassphrase(env);
+    res.json({
+      authRequired: expected.length > 0,
+    });
+  });
+
+  app.post('/api/auth/verify', (req: Request, res: Response<AuthVerifyResponse>) => {
+    const expected = getExpectedPassphrase(env);
+    if (!expected) {
+      res.json({ authenticated: true });
+      return;
+    }
+
+    const body = req.body as Partial<AuthVerifyRequest> | undefined;
+    const candidate = typeof body?.passphrase === 'string' ? body.passphrase.trim() : '';
+
+    if (isPassphraseValid(candidate, expected)) {
+      res.json({ authenticated: true });
+      return;
+    }
+
+    res.status(401).json({
+      authenticated: false,
+      error: 'Passphrase non valida. Verifica la parola chiave e riprova.',
+    });
+  });
+
   app.get('/api/frameworks', (_req: Request, res: Response) => {
     res.json({ frameworks: PROMPT_TYPES });
   });
@@ -57,6 +101,25 @@ export function createApp(
   app.post('/api/build-prompt', async (req: Request, res: Response) => {
     try {
       const body = req.body as Partial<BuildPromptRequest> | undefined;
+      const expectedPassphrase = getExpectedPassphrase(env);
+
+      if (expectedPassphrase) {
+        const headerPassphrase =
+          typeof req.headers['x-app-passphrase'] === 'string'
+            ? req.headers['x-app-passphrase'].trim()
+            : '';
+        const bodyPassphrase =
+          typeof body?.passphrase === 'string' ? body.passphrase.trim() : '';
+        const providedPassphrase = headerPassphrase || bodyPassphrase;
+
+        if (!isPassphraseValid(providedPassphrase, expectedPassphrase)) {
+          res.status(401).json({
+            error: 'Accesso non autorizzato: passphrase mancante o non valida.',
+          });
+          return;
+        }
+      }
+
       const frameworkId =
         typeof body?.frameworkId === 'string' ? body.frameworkId.trim() : '';
       const rawUserText =

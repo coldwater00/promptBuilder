@@ -265,4 +265,47 @@ describe('4. Endpoint API Express Stateless (server/index.ts)', () => {
     expect(res.body.anatomy).toHaveLength(6);
     expect(res.body.whyItWorks).toHaveLength(3);
   });
+
+  it('protegge gli endpoint con APP_PASSPHRASE quando configurata nell’environment', async () => {
+    const protectedApp = createApp(fakeGenerator, {
+      LLM_PROVIDER: 'ollama',
+      OLLAMA_BASE_URL: 'http://localhost:11434',
+      OLLAMA_MODEL: 'gemma4:26b',
+      APP_PASSPHRASE: 'super-secret-passphrase',
+    });
+
+    const statusRes = await request(protectedApp).get('/api/auth/status');
+    expect(statusRes.status).toBe(200);
+    expect(statusRes.body).toEqual({ authRequired: true });
+
+    const badVerify = await request(protectedApp)
+      .post('/api/auth/verify')
+      .send({ passphrase: 'wrong' });
+    expect(badVerify.status).toBe(401);
+    expect(badVerify.body.authenticated).toBe(false);
+
+    const goodVerify = await request(protectedApp)
+      .post('/api/auth/verify')
+      .send({ passphrase: 'super-secret-passphrase' });
+    expect(goodVerify.status).toBe(200);
+    expect(goodVerify.body).toEqual({ authenticated: true });
+
+    const unauthorizedBuild = await request(protectedApp)
+      .post('/api/build-prompt')
+      .send({
+        frameworkId: 'rtf',
+        userText: 'Scrivi una funzione TypeScript con retry.',
+      });
+    expect(unauthorizedBuild.status).toBe(401);
+
+    const authorizedBuild = await request(protectedApp)
+      .post('/api/build-prompt')
+      .set('x-app-passphrase', 'super-secret-passphrase')
+      .send({
+        frameworkId: 'rtf',
+        userText: 'Scrivi una funzione TypeScript con retry.',
+      });
+    expect(authorizedBuild.status).toBe(200);
+    expect(authorizedBuild.body.frameworkId).toBe('rtf');
+  });
 });

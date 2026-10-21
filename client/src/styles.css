@@ -135,6 +135,13 @@ li {
   color: var(--text-secondary);
 }
 
+.header-status {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
 .provider-pill {
   display: inline-flex;
   align-items: center;
@@ -728,6 +735,11 @@ li {
   cursor: not-allowed;
 }
 
+.primary-submit-btn.is-loading-wait:disabled {
+  opacity: 0.85;
+  cursor: wait;
+}
+
 .secondary-btn {
   background: var(--bg-surface-elevated);
   color: var(--text-primary);
@@ -768,8 +780,75 @@ li {
   opacity: 0.25;
 }
 
+.hourglass-svg {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  animation: hourglass-flip 1.6s ease-in-out infinite;
+}
+
+.hourglass-svg-lg {
+  width: 24px;
+  height: 24px;
+}
+
+.hourglass-status-panel {
+  margin-top: 1.1rem;
+  padding: 0.95rem 1.15rem;
+  border-radius: var(--radius-md);
+  background: rgba(99, 102, 241, 0.12);
+  border: 1px solid rgba(99, 102, 241, 0.4);
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+  cursor: wait;
+}
+
+.hourglass-badge {
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+  background: var(--bg-surface-elevated);
+  border: 1px solid rgba(99, 102, 241, 0.45);
+  color: var(--accent-primary-hover);
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+}
+
+.hourglass-status-text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.hourglass-status-text strong {
+  font-size: 0.92rem;
+  color: var(--text-primary);
+}
+
+.hourglass-status-text span {
+  font-size: 0.83rem;
+  color: var(--text-secondary);
+}
+
 @keyframes spin {
   to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes hourglass-flip {
+  0% {
+    transform: rotate(0deg);
+  }
+  45% {
+    transform: rotate(180deg);
+  }
+  55% {
+    transform: rotate(180deg);
+  }
+  100% {
     transform: rotate(360deg);
   }
 }
@@ -956,6 +1035,125 @@ li {
   font-size: 0.82rem;
   color: var(--text-muted);
   background: var(--bg-surface);
+}
+
+/* Passphrase Access Gate (Prima Pagina) */
+.auth-gate-wrapper {
+  min-height: calc(100vh - 180px);
+  display: grid;
+  place-items: center;
+  padding: 1.5rem 1rem;
+}
+
+.auth-card {
+  width: 100%;
+  max-width: 460px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  padding: 2rem 1.75rem;
+  box-shadow: var(--shadow-card);
+  display: flex;
+  flex-direction: column;
+  gap: 1.4rem;
+}
+
+.auth-card-header {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 0.55rem;
+}
+
+.auth-lock-badge {
+  width: 52px;
+  height: 52px;
+  border-radius: 14px;
+  background: var(--family-framework-bg);
+  border: 1px solid rgba(99, 102, 241, 0.35);
+  color: var(--accent-primary-hover);
+  display: grid;
+  place-items: center;
+  margin-bottom: 0.25rem;
+}
+
+.auth-lock-icon {
+  width: 24px;
+  height: 24px;
+}
+
+.auth-title {
+  font-size: 1.4rem;
+  font-weight: 700;
+}
+
+.auth-subtitle {
+  font-size: 0.9rem;
+  color: var(--text-secondary);
+}
+
+.auth-form {
+  display: flex;
+  flex-direction: column;
+  gap: 1.1rem;
+}
+
+.auth-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.auth-input-group {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.auth-input {
+  width: 100%;
+  padding: 0.78rem 5.4rem 0.78rem 0.95rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-page);
+  color: var(--text-primary);
+  font-size: 0.95rem;
+  font-family: inherit;
+  transition: border-color 0.15s ease;
+}
+
+.auth-input:focus {
+  border-color: var(--accent-primary);
+}
+
+.auth-toggle-btn {
+  position: absolute;
+  right: 0.45rem;
+  padding: 0.35rem 0.65rem;
+  border-radius: 6px;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-surface-elevated);
+  color: var(--text-secondary);
+  font-size: 0.76rem;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.auth-toggle-btn:hover {
+  color: var(--text-primary);
+  border-color: var(--accent-primary);
+}
+
+.auth-submit-btn {
+  width: 100%;
+  padding: 0.82rem 1.35rem;
+}
+
+.lock-session-btn {
+  padding: 0.38rem 0.8rem;
+  font-size: 0.8rem;
 }
 
 @media (prefers-reduced-motion: reduce) {
